@@ -1,0 +1,38 @@
+# Core dependencies
+openai-whisper==20231117
+faster-whisper==1.0.3
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Translation
+argos-translate==1.9.6
+
+# LLM integration
+ollama==0.4.4
+litellm==1.56.7
+
+# Notion API
+notion-client==2.2.1
+
+# CLI and configuration
+typer[all]==0.15.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+pyyaml==6.0.2
+python-dotenv==1.0.1
+
+# Async and queue management
+watchdog==6.0.0
+
+# Utilities
+rich==13.9.4
+loguru==0.7.3
+
+# Development and testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+pytest-cov==6.0.0
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+pre-commit==4.0.1
