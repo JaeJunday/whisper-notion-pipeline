@@ -36,6 +36,7 @@ class Job:
     result: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
     retry_count: int = 0
+    current_step: Optional[str] = None
     
     def to_dict(self) -> Dict:
         return {
@@ -48,6 +49,7 @@ class Job:
             "result": self.result,
             "error": self.error,
             "retry_count": self.retry_count,
+            "current_step": self.current_step,
         }
 
 
@@ -138,6 +140,8 @@ class JobQueue:
             
     def _worker(self):
         """Worker thread/process"""
+        from queue import Empty
+        
         while self.running:
             try:
                 # Get job from queue
@@ -149,8 +153,11 @@ class JobQueue:
                 # Process job
                 self._process_job(job_id)
                 
+            except Empty:
+                # This is normal - just waiting for jobs
+                continue
             except Exception as e:
-                logger.error(f"Worker error: {e}")
+                logger.error(f"Worker error: {e}", exc_info=True)
                 
     def _process_job(self, job_id: str):
         """Process a single job"""
@@ -213,13 +220,26 @@ class JobQueue:
                     
     def _step_transcribe(self, job: Job, output_dir: Path) -> Dict:
         """Transcription step"""
-        logger.info(f"Step 1/4: Transcribing {job.audio_path}")
+        logger.info(f"\n{'='*50}\nStep 1/4: Transcribing {job.audio_path}\n{'='*50}")
+        
+        with self.lock:
+            job.current_step = "Transcribing"
+        
+        # Check if there's a checkpoint
+        checkpoint_file = Path("checkpoints") / f"{job.audio_path.stem}_checkpoint.json"
+        if checkpoint_file.exists():
+            logger.info(f"Found checkpoint for {job.audio_path.stem}, resuming transcription...")
         
         result = self.transcriber.transcribe(job.audio_path)
         
         # Save transcription
         output_path = output_dir / "transcription"
         self.transcriber.save_result(result, output_path)
+        
+        # Also save a backup copy immediately after transcription
+        backup_path = output_dir / "transcription_backup"
+        self.transcriber.save_result(result, backup_path)
+        logger.info(f"Backup saved to {backup_path}")
         
         # Run hook if configured
         self._run_hook("post_transcribe", result)
@@ -228,7 +248,10 @@ class JobQueue:
         
     def _step_translate(self, job: Job, result: Dict, output_dir: Path) -> Dict:
         """Translation step"""
-        logger.info(f"Step 2/4: Translating from {result['language']}")
+        logger.info(f"\n{'='*50}\nStep 2/4: Translating from {result['language']} to {settings.translation.target_language}\n{'='*50}")
+        
+        with self.lock:
+            job.current_step = "Translating"
         
         translation = self.translator.translate(
             result["text"],
@@ -251,7 +274,10 @@ class JobQueue:
         
     def _step_summarize(self, job: Job, result: Dict, output_dir: Path) -> Dict:
         """Summarization step"""
-        logger.info("Step 3/4: Summarizing")
+        logger.info(f"\n{'='*50}\nStep 3/4: Summarizing with {settings.summarization.engine}\n{'='*50}")
+        
+        with self.lock:
+            job.current_step = "Summarizing"
         
         # Use translated text if available
         text_to_summarize = result.get("translation", {}).get("text", result["text"])
@@ -282,6 +308,9 @@ class JobQueue:
     def _step_upload(self, job: Job, result: Dict, output_dir: Path) -> Dict:
         """Notion upload step"""
         logger.info("Step 4/4: Uploading to Notion")
+        
+        with self.lock:
+            job.current_step = "Uploading to Notion"
         
         # Prepare title
         title = settings.notion.page_title_template.format(

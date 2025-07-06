@@ -93,6 +93,12 @@ class PerformanceConfig(BaseModel):
     prefetch_factor: int = 2
 
 
+class CheckpointConfig(BaseModel):
+    enabled: bool = True
+    interval: int = 300  # 5 minutes
+    keep_all: bool = False
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -126,6 +132,7 @@ class Settings(BaseSettings):
     ))
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
     @classmethod
     def from_yaml(cls, config_path: str = "config.yaml") -> "Settings":

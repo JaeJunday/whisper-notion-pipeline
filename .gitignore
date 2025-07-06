@@ -55,6 +55,9 @@ logs/*
 models/
 .cache/
 
+# Checkpoints
+checkpoints/
+
 # OS
 .DS_Store
 Thumbs.db

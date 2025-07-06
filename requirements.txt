@@ -8,7 +8,6 @@ torchaudio>=2.0.0
 argos-translate==1.9.6
 
 # LLM integration
-ollama==0.4.4
 litellm==1.56.7
 
 # Notion API

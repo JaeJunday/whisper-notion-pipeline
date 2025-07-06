@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import os
 import sys
@@ -8,7 +9,7 @@ from typing import List, Optional
 
 import typer
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
 from rich.table import Table
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -147,7 +148,7 @@ def process(
     for audio_file in audio_files:
         job_id = job_queue.add_job(audio_file)
         job_ids.append(job_id)
-        console.print(f"  " {audio_file.name} � Job {job_id}")
+        console.print(f"  • {audio_file.name} → Job {job_id}")
         
     # Start processing
     job_queue.start()
@@ -156,32 +157,89 @@ def process(
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("Processing...", total=len(job_ids))
+        overall_task = progress.add_task("[cyan]Overall Progress", total=len(job_ids))
+        job_tasks = {}
+        
+        # Create individual tasks for each job
+        for job_id, audio_file in zip(job_ids, audio_files):
+            job_tasks[job_id] = progress.add_task(
+                f"[yellow]{audio_file.name}", 
+                total=4,  # 4 steps: transcribe, translate, summarize, upload
+                visible=False
+            )
         
         completed = set()
+        last_statuses = {}
+        
         while len(completed) < len(job_ids):
-            time.sleep(1)
+            time.sleep(0.5)  # Check more frequently
             
             for job_id in job_ids:
                 if job_id in completed:
                     continue
                     
                 status = job_queue.get_job_status(job_id)
-                if status and status["status"] in ["completed", "failed"]:
-                    completed.add(job_id)
-                    progress.advance(task)
+                if not status:
+                    continue
                     
-                    if status["status"] == "completed":
-                        console.print(f"[green][/green] Job {job_id} completed")
+                # Update individual job progress
+                job_task = job_tasks[job_id]
+                current_status = status["status"]
+                
+                # Update status for running jobs
+                if current_status == "running":
+                    current_step = status.get("current_step", "Starting")
+                    progress.update(job_task, visible=True)
+                    progress.update(job_task, description=f"[bold green]{Path(status['audio_path']).name}[/bold green] - {current_step}...")
+                
+                # Detect status changes
+                if job_id not in last_statuses or last_statuses[job_id] != current_status:
+                    last_statuses[job_id] = current_status
+                    
+                    # Update progress based on result
+                    if status.get("result"):
+                        result = status["result"]
+                        steps_completed = 1  # At least transcription is done
+                        
+                        if result.get("translation"):
+                            steps_completed = 2
+                            progress.update(job_task, description=f"[bold blue]{Path(status['audio_path']).name}[/bold blue] - Translated")
+                        
+                        if result.get("summary"):
+                            steps_completed = 3
+                            progress.update(job_task, description=f"[bold magenta]{Path(status['audio_path']).name}[/bold magenta] - Summarized")
+                        
+                        if result.get("notion"):
+                            steps_completed = 4
+                            progress.update(job_task, description=f"[bold green]{Path(status['audio_path']).name}[/bold green] - Uploaded")
+                        
+                        progress.update(job_task, completed=steps_completed)
+                
+                # Handle completion
+                if current_status in ["completed", "failed"]:
+                    completed.add(job_id)
+                    progress.advance(overall_task)
+                    progress.update(job_task, visible=False)
+                    
+                    if current_status == "completed":
+                        console.print(f"\n[green]✓[/green] {Path(status['audio_path']).name} completed successfully")
                         
                         # Show results
                         result = status["result"]
-                        if result.get("notion", {}).get("uploaded"):
-                            console.print(f"  [blue]Notion URL:[/blue] {result['notion']['url']}")
+                        if result:
+                            console.print(f"  • Language: {result.get('language', 'unknown')}")
+                            console.print(f"  • Duration: {result.get('duration', 0):.1f}s")
+                            console.print(f"  • Words: {len(result.get('text', '').split())}")
+                            if result.get("notion", {}).get("uploaded"):
+                                console.print(f"  • [blue]Notion:[/blue] {result['notion']['url']}")
                     else:
-                        console.print(f"[red][/red] Job {job_id} failed: {status['error']}")
+                        console.print(f"\n[red]✗[/red] {Path(status['audio_path']).name} failed: {status['error']}")
                         
     # Stop job queue
     job_queue.stop()
@@ -199,7 +257,7 @@ def process(
     
     for job in all_jobs:
         file_name = Path(job["audio_path"]).name
-        status = "" if job["status"] == "completed" else ""
+        status = "✓" if job["status"] == "completed" else "✗"
         
         duration = "-"
         language = "-"

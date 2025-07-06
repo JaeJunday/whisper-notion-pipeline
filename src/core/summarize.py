@@ -1,4 +1,6 @@
 import time
+import subprocess
+import json
 from typing import Dict, Optional
 
 from ..utils.config import settings
@@ -25,32 +27,16 @@ class Summarizer:
             
         logger.info(f"Loading {self.config.engine} client")
         
-        if self.config.engine == "ollama":
-            self._load_ollama_client()
-        elif self.config.engine == "openai":
+        if self.config.engine == "openai":
             self._load_openai_client()
         elif self.config.engine == "litellm":
             self._load_litellm_client()
+        elif self.config.engine == "gemini-cli":
+            self._load_gemini_cli()
+        elif self.config.engine == "claude-cli":
+            self._load_claude_cli()
         else:
             raise ValueError(f"Unknown summarization engine: {self.config.engine}")
-            
-    def _load_ollama_client(self):
-        """Load Ollama client"""
-        try:
-            import ollama
-            self.client = ollama.Client(host=settings.ollama_base_url)
-            
-            # Check if model is available
-            models = self.client.list()
-            model_names = [m["name"] for m in models.get("models", [])]
-            
-            if self.config.model not in model_names:
-                logger.warning(f"Model {self.config.model} not found. Available models: {model_names}")
-                logger.info(f"Pulling model {self.config.model}...")
-                self.client.pull(self.config.model)
-                
-        except Exception as e:
-            raise SummarizeError(f"Failed to load Ollama client: {e}") from e
             
     def _load_openai_client(self):
         """Load OpenAI client"""
@@ -77,6 +63,30 @@ class Summarizer:
         except ImportError as e:
             raise SummarizeError("LiteLLM package not installed") from e
             
+    def _load_gemini_cli(self):
+        """Load Gemini CLI"""
+        try:
+            # Check if gemini CLI is available
+            result = subprocess.run(["which", "gemini"], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise SummarizeError("Gemini CLI not found. Please install gemini CLI.")
+            self.client = "gemini-cli"
+            logger.info("Gemini CLI loaded successfully")
+        except Exception as e:
+            raise SummarizeError(f"Failed to load Gemini CLI: {e}") from e
+            
+    def _load_claude_cli(self):
+        """Load Claude CLI"""
+        try:
+            # Check if claude CLI is available
+            result = subprocess.run(["which", "claude"], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise SummarizeError("Claude CLI not found. Please install claude CLI.")
+            self.client = "claude-cli"
+            logger.info("Claude CLI loaded successfully")
+        except Exception as e:
+            raise SummarizeError(f"Failed to load Claude CLI: {e}") from e
+            
     def summarize(self, text: str, context: Optional[Dict] = None) -> Dict:
         """Summarize the given text"""
         if not self.config.enabled:
@@ -100,12 +110,16 @@ class Summarizer:
             )
             
             # Call appropriate engine
-            if self.config.engine == "ollama":
-                result = self._summarize_ollama(user_prompt)
-            elif self.config.engine == "openai":
+            if self.config.engine == "openai":
                 result = self._summarize_openai(user_prompt)
-            else:  # litellm
+            elif self.config.engine == "litellm":
                 result = self._summarize_litellm(user_prompt)
+            elif self.config.engine == "gemini-cli":
+                result = self._summarize_gemini_cli(user_prompt)
+            elif self.config.engine == "claude-cli":
+                result = self._summarize_claude_cli(user_prompt)
+            else:
+                raise ValueError(f"Unknown summarization engine: {self.config.engine}")
                 
             duration = time.time() - start_time
             logger.info(f"Summarization completed in {duration:.2f}s")
@@ -123,22 +137,6 @@ class Summarizer:
             logger.error(f"Summarization failed: {e}")
             raise SummarizeError(f"Summarization failed: {e}") from e
             
-    def _summarize_ollama(self, prompt: str) -> str:
-        """Summarize using Ollama"""
-        response = self.client.chat(
-            model=self.config.model,
-            messages=[
-                {"role": "system", "content": self.config.system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            options={
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-            },
-        )
-        
-        return response["message"]["content"]
-        
     def _summarize_openai(self, prompt: str) -> str:
         """Summarize using OpenAI"""
         response = self.client.ChatCompletion.create(
@@ -166,6 +164,47 @@ class Summarizer:
         )
         
         return response.choices[0].message.content
+        
+    def _summarize_gemini_cli(self, prompt: str) -> str:
+        """Summarize using Gemini CLI"""
+        # Combine system prompt and user prompt
+        full_prompt = f"{self.config.system_prompt}\n\n{prompt}"
+        
+        # Call gemini CLI
+        cmd = ["gemini"]
+        
+        try:
+            logger.info(f"Running gemini CLI command...")
+            result = subprocess.run(
+                cmd,
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            raise SummarizeError(f"Gemini CLI error: {e.stderr}") from e
+            
+    def _summarize_claude_cli(self, prompt: str) -> str:
+        """Summarize using Claude CLI"""
+        # Combine system prompt and user prompt
+        full_prompt = f"{self.config.system_prompt}\n\n{prompt}"
+        
+        # Call claude CLI
+        cmd = ["claude"]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            raise SummarizeError(f"Claude CLI error: {e.stderr}") from e
         
     def chunk_and_summarize(self, text: str, chunk_size: int = 10000) -> Dict:
         """Summarize long text by chunking"""
